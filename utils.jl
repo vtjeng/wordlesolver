@@ -332,7 +332,8 @@ function get_optimal_strategy_exhaustive(
     solution_pool::AbstractVector{T};
     hard_mode::Bool = false,
     turns_budget::Int = typemax(Int),
-    show_progress::Bool = false
+    show_progress::Bool = turns_budget >= 3,
+    guesses::AbstractVector{T} = T[],
 )::Union{Nothing,Tuple{Vector{Int},T,Dict{UInt8,Tuple{T,Dict}}}} where {T<:Union{Int,String}}
     # returns number of turns, next guess, and a dictionary specifying what to do for subsequent turns.
     @assert turns_budget >= 1
@@ -340,34 +341,9 @@ function get_optimal_strategy_exhaustive(
         # if there is one remaining solution, we guess that word, and get a solution in one turn.
         return [1], solution_pool[1], Dict()
     end
-    best_max_num_turns = turns_budget
-    best_average_num_turns = turns_budget
-    best_guess = nothing
-    best_num_turns = nothing
-    best_strategy = nothing
-    # num_skipped corresponds to the number of guesses that don't satisfy `turns_budget`.
-    num_skipped = 0
-    if show_progress
-        valid_guesses = Tuple{String,Float64,Float64}[]
-    end
 
     if show_progress
         pmeter = Progress(length(guess_pool))
-    end
-
-    function update_progress(
-        best_guess::Union{Nothing,T},
-        best_max_num_turns::Number,
-        best_average_num_turns::Number,
-        num_skipped::Int,
-    )
-        ProgressMeter.next!(pmeter; showvalues = [
-            (:best_guess, best_guess === nothing ? "N/A" : get_word(best_guess)),
-            (:best_max_num_turns, best_guess === nothing ? "N/A" : best_max_num_turns),
-            (:best_average_num_turns, best_guess === nothing ? "N/A" : best_average_num_turns),
-            (:num_skipped, num_skipped),
-            (:valid_guesses, valid_guesses)
-        ])
     end
 
     for guess in guess_pool
@@ -376,39 +352,19 @@ function get_optimal_strategy_exhaustive(
             solution_pool,
             guess,
             hard_mode = hard_mode,
-            turns_budget = best_max_num_turns
+            turns_budget = turns_budget,
+            guesses = [guesses; guess]
         )
         if r === nothing
-            num_skipped += 1
             if show_progress
-                update_progress(best_guess, best_max_num_turns, best_average_num_turns, num_skipped)
+                ProgressMeter.next!(pmeter, showvalues = [(:guesses, guesses)])
             end
             continue
         end
         num_turns, strategy = r
-        max_num_turns = maximum(num_turns)
-        average_num_turns = Statistics.mean(num_turns)
-
-        if show_progress
-            push!(valid_guesses, (get_word(guess), max_num_turns, average_num_turns))
-        end
-
-        if max_num_turns < best_max_num_turns || average_num_turns < best_average_num_turns
-            best_max_num_turns = max_num_turns
-            best_average_num_turns = average_num_turns
-            best_num_turns = num_turns
-            best_guess = guess
-            best_strategy = strategy
-        end
-
-        if show_progress
-            update_progress(best_guess, best_max_num_turns, best_average_num_turns, num_skipped)
-        end
+        return num_turns, guess, strategy
     end
-    if best_guess === nothing
-        return nothing
-    end
-    return best_num_turns, best_guess, best_strategy
+    return nothing
 end
 
 """
@@ -425,7 +381,8 @@ function get_optimal_strategy_exhaustive_helper(
     solution_pool::AbstractVector{T},
     initial_guess::T;
     hard_mode::Bool = false,
-    turns_budget = typemax(Int)
+    turns_budget = typemax(Int),
+    guesses::AbstractVector{T},
 )::Union{Nothing,Tuple{Vector{Int},Dict{UInt8,Tuple{T,Dict}}}} where {T<:Union{Int,String}}
     # 1. FAIL: Can't solve if we're down to 0 turns.
     if turns_budget == 0
@@ -478,7 +435,8 @@ function get_optimal_strategy_exhaustive_helper(
                 hard_mode ? sharded_guess_pool[score] : guess_pool,
                 solution_subpool,
                 hard_mode = hard_mode,
-                turns_budget = turns_budget - 1
+                turns_budget = turns_budget - 1,
+                guesses = guesses
             )
             # 5. FAIL. Some subpool is not solvable in the remaining budget.
             if r === nothing
